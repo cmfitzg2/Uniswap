@@ -4,21 +4,39 @@ const fs = require('fs');
 const ethers = require('ethers');
 const yesno = require('yesno');
 
+//Constants
 const chainId = ChainId.MAINNET;
 const gweiMultiplier = 1e9;
-const gasFee = 90;
+let expirationTime = Math.floor(Date.now() / 1000) + 60;
+//USDC address
 const inputTokenAddress = '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48';
 const inputTokenSymbol = 'USDC';
-const desiredInputAmount = 50;
-const outputTokenAddress = '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599';
-const outputTokenSymbol = 'BTC';
-const creditAddress = '0x713cC41082d2f2446f66AE69860eF98D172b64CB';
-const expirationTime = Math.floor(Date.now() / 1000) + 60 * 30;
 
+/**
+ * Change these *
+ */
+//The token we're trying to buy
+const outputTokenAddress = '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599';
+//Its ticker symbol -- only used to display data to user, can be anything.
+const outputTokenSymbol = 'WBTC';
+//The public address of our wallet
+const creditAddress = '0x713cC41082d2f2446f66AE69860eF98D172b64CB';
+//20 = minutes until order expires
+expirationTime = expirationTime * 20;
+//How much we're spending in USDC
+const desiredInputAmount = 50;
+//Highest price we're willing to pay (in USD) without accounting for slippage
+const maxPriceWithoutSlippage = 50000;
+//Gwei
+const gasFee = 90;
+const gasLimit = 300000;
+//Manual confirmation required flag
+const manualConfirm = true;
+
+//Private data
 let data = JSON.parse(fs.readFileSync('secret.json'));
 const privKey = data.PRIVATE_KEY;
 const uniswapRouterAddress = '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D'
-const maxPriceWithoutSlippage = 63080;
 const provider = new InfuraProvider("homestead", {
     projectId: 'f49e6c05d6814347a848da44864f8e9d',
     projectSecret: data.INFURA_KEY
@@ -48,7 +66,7 @@ const attemptTrade = async (outputToken, inputToken, desiredInputAmountAdjusted,
 	const route = new Route([inputTokenEthPair, ethOutputTokenPair], inputToken)
 	try {
 		const trade = new Trade(route, new TokenAmount(inputToken, desiredInputAmountAdjusted), TradeType.EXACT_INPUT)
-		if (trade.executionPrice.invert().toSignificant(6) > maxPriceWithoutSlippage) {
+		if (trade.executionPrice.invert().toSignificant(18) > maxPriceWithoutSlippage) {
 			console.log("Current market price (" + trade.executionPrice.invert().toSignificant(6) + ") exceeds max threshold (" + maxPriceWithoutSlippage.toPrecision(6) + ")");
 			sleep(50);
 			waitAvailability(true);
@@ -57,7 +75,7 @@ const attemptTrade = async (outputToken, inputToken, desiredInputAmountAdjusted,
 			console.log("Receiving " + trade.outputAmount.toSignificant(6) + " " + outputTokenSymbol)
 			console.log("Execution price: " + trade.executionPrice.invert().toSignificant(6) + " " + inputTokenSymbol)
 			console.log("Mid price: " + trade.nextMidPrice.invert().toSignificant(6))
-			const slippageTolerance = new Percent('50', '10000'); //50 bips
+			const slippageTolerance = new Percent('10', '100'); //10% slippage allowed
 			const amountOutGuaranteed = trade.minimumAmountOut(slippageTolerance).raw;
 			console.log("Minimum amount out: " + amountOutGuaranteed / (10 ** outputToken.decimals))
 			const path = [inputToken.address, weth.address, outputToken.address];
@@ -72,11 +90,12 @@ const attemptTrade = async (outputToken, inputToken, desiredInputAmountAdjusted,
 			gasPrice = ethers.BigNumber.from(gasPrice)
 			const wallet = new ethers.Wallet(Buffer.from(privKey, "hex"));
 			const signer = wallet.connect(provider);
-			const confirmation = await yesno({
-				question: 'Are you sure you want to continue?'
-			});
-
-			if (confirmation) {
+			if (manualConfirm) {
+				const confirmation = await yesno({
+					question: 'Are you sure you want to continue?'
+				});
+			}
+			if (confirmation || manualConfirm == false) {
 				const uniswap = new ethers.Contract(
 					uniswapRouterAddress,
 					['function swapExactTokensForTokens(uint amountIn, uint amountOutMin, address[] calldata path, address to, uint deadline) external returns (uint[] memory amounts)'],
@@ -90,7 +109,7 @@ const attemptTrade = async (outputToken, inputToken, desiredInputAmountAdjusted,
 					deadline,
 					{
 						gasPrice: gasPrice,
-						gasLimit: ethers.BigNumber.from(300000).toHexString()
+						gasLimit: ethers.BigNumber.from(gasLimit).toHexString()
 					}
 				);
 				
